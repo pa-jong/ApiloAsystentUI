@@ -1,11 +1,10 @@
 // ==UserScript==
 // @name         APILO: Asystent UI
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  Modufikuje widok szczegółów zamówienia usuwa zbędne elemety poprawia widoczność na panelu dotykowym 
+// @version      1.1
+// @description  Modufikuje widok szczegółów zamówienia usuwa zbędne elemety poprawia widoczność na panelu dotykowym
 // @author       Pa-Jong
 // @match        https://elektrone.apilo.com/order/order/detail/*
-// @require      https://pa-jong.github.io/ApiloAsystentUI/ApiloAsystentUI.user.js
 // @updateURL    https://pa-jong.github.io/ApiloAsystentUI/update.json
 // @downloadURL  https://pa-jong.github.io/ApiloAsystentUI/ApiloAsystentUI.user.js
 // @grant        none
@@ -17,13 +16,13 @@
 
   const HIDE_CLASS = 'apilo-hide-kt-portlet';
   const STORAGE_KEY = 'apilo_portlet_hidden_v6_noDetailsPanel';
-  const MAX_ATTEMPTS = 40;
-  const INTERVAL_MS = 300;
+  const MAX_ATTEMPTS = 80;
+  const INTERVAL_MS = 250;
 
   // ===== style =====
   const style = document.createElement('style');
   style.id = 'apilo-combined-style-right';
-style.textContent = `
+  style.textContent = `
 /* Gdy panel schowany: ukryj wszystkie elementy toolbara poza przyciskiem "Pakuj" */
 body.apilo-hide-kt-portlet .kt-portlet__head-toolbar {
   display: flex !important;
@@ -155,7 +154,6 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
   pointer-events: auto !important;
 }
 `;
-
   document.head.appendChild(style);
 
   // ===== utilities =====
@@ -163,14 +161,12 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
     return (string || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  // ===== ensure right-top toggle button (do NOT move Pakuj) =====
+  // ===== ensure right-top toggle button =====
   const RIGHT_TOGGLE_ID = 'apilo-right-toggle';
   function ensureRightToggle() {
-    // find header element to attach to
     const header = document.getElementById('kt_header') || document.querySelector('.kt-header') || document.body;
     if (!header) return false;
 
-    // ensure header is positioned (so absolute will be relative to it)
     if (getComputedStyle(header).position === 'static') header.style.position = 'relative';
 
     let container = document.getElementById(RIGHT_TOGGLE_ID);
@@ -180,7 +176,6 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
       header.appendChild(container);
     }
 
-    // create toggle button if not exists
     if (!container.querySelector('.apilo-btn-toggle')) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -203,10 +198,11 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
     return true;
   }
 
-  // ===== transformTable (pełna, idempotentna wersja) =====
+  // ===== transformTable =====
   function transformTable() {
     const table = document.querySelector('.kt-portlet__body .table-responsive table.table');
     if (!table) return false;
+
     const thead = table.querySelector('thead');
     const tbody = table.querySelector('tbody');
     if (!thead || !tbody) return false;
@@ -221,42 +217,62 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
 
     const rows = Array.from(tbody.querySelectorAll('tr'));
     rows.forEach(tr => {
-      if (tr.dataset.apiloProcessed === '1') return;
       const cells = Array.from(tr.children);
-      if (cells.length === 0) { tr.dataset.apiloProcessed = '1'; return; }
+      if (cells.length === 0) return;
 
       const thumbCell = cells[1] || null;
       const nameCell = cells[2] || cells[1] || cells[0];
       const skuCell = cells[3] || null;
       const qtyCell = cells[4] || cells.find(c => c.classList.contains('text-center')) || null;
 
-      // move allegro link into thumb (wrap existing img) - don't clone
+      // ============================================================
+      // 1) ZAPAMIĘTAJ link original-code zanim nameCell zostanie wyczyszczony
+      // ============================================================
       try {
-        if (nameCell && thumbCell) {
-          const allegroAnchor = nameCell.querySelector('a[href*="allegro.pl"], a[href*="allegro"]') ||
-                                tr.querySelector('a[href*="allegro.pl"], a[href*="allegro"]');
-          if (allegroAnchor) {
+        const a = tr.querySelector('a[href*="original-code/"]');
+        if (a) {
+          const raw = a.getAttribute('href'); // WAŻNE: getAttribute, nie .href
+          if (raw) tr.dataset.apiloOriginalCodeHref = raw;
+        }
+      } catch(e){}
+
+      // ============================================================
+      // 2) PODPINANIE LINKU POD ZDJĘCIE: robimy BEZPOŚREDNIO allegro.pl/iID.html
+      // ============================================================
+      try {
+        if (thumbCell && tr.dataset.apiloOriginalCodeHref) {
+
+          const m = tr.dataset.apiloOriginalCodeHref.match(/original-code\/(\d+)/);
+          if (m && m[1]) {
+            const allegroHref = 'https://allegro.pl/i' + m[1] + '.html';
+
             const img = thumbCell.querySelector('img');
             if (img) {
               const existingLink = thumbCell.querySelector('a.apilo-thumb-link');
+
               if (!existingLink) {
                 const newA = document.createElement('a');
                 newA.className = 'apilo-thumb-link';
-                newA.href = allegroAnchor.href;
-                newA.target = allegroAnchor.target || '_blank';
+                newA.href = allegroHref;
+                newA.target = '_blank';
                 newA.rel = 'noopener noreferrer';
+
                 img.parentNode.replaceChild(newA, img);
                 newA.appendChild(img);
-              } else if (!existingLink.href && allegroAnchor.href) {
-                existingLink.href = allegroAnchor.href;
+              } else {
+                existingLink.href = allegroHref;
               }
-              try { allegroAnchor.remove(); } catch(e){}
             }
           }
         }
-      } catch(e) { console.warn('apilo: przenoszenie linku', e); }
+      } catch(e){ console.warn('apilo: podpinanie linku do miniatury', e); }
 
-      // SKU cleaning: remove trailing EAN (8-13 digits) and trailing slashes
+      // ============================================================
+      // 3) Resztę przeróbek rób tylko raz
+      // ============================================================
+      if (tr.dataset.apiloProcessed === '1') return;
+
+      // SKU cleaning
       let skuText = '';
       if (skuCell) {
         skuText = skuCell.textContent.trim();
@@ -264,7 +280,7 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
         skuText = skuText.replace(/\/\s*$/g, '').trim();
       }
 
-      // product name: extract clean text and remove sku occurrences
+      // product name
       let productNameText = '';
       if (nameCell) {
         const clone = nameCell.cloneNode(true);
@@ -276,12 +292,12 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
         }
       }
 
-      // remove a.rajax and flaticon icons from original nameCell (user requested removal)
+      // remove a.rajax and flaticon icons from original nameCell
       try {
         if (nameCell) {
           const toRemove = nameCell.querySelectorAll('a.rajax, i.flaticon, i.sprite-platform-11');
           toRemove.forEach(n => n.remove());
-          // remove empty divs or margin-top:6px placeholders
+
           const possibleDivs = nameCell.querySelectorAll('div');
           possibleDivs.forEach(d => {
             const styleAttr = (d.getAttribute('style') || '').replace(/\s/g,'').toLowerCase();
@@ -290,7 +306,7 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
         }
       } catch(e){}
 
-      // insert structure: SKU main, name sub (only once)
+      // insert structure: SKU main, name sub
       if (nameCell && !nameCell.querySelector('.apilo-sku-main')) {
         nameCell.innerHTML = '';
         if (skuText) {
@@ -333,18 +349,16 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
     try {
       const btn = document.querySelector('a[data-packing-assistant-button], a[href*="packing-assistant"]');
       if (!btn) return;
-      // DO NOT reparent the button; only ensure visible and styled
       btn.style.display = 'inline-block';
       btn.style.visibility = 'visible';
       btn.style.opacity = '1';
       btn.style.pointerEvents = 'auto';
       btn.style.zIndex = '110001';
-      // small margin if needed (but keep it where it is)
       btn.style.marginLeft = btn.style.marginLeft || '6px';
     } catch(e) { console.warn('apilo: ensurePackingButtonVisibleButDontMove', e); }
   }
 
-  // ===== main polling: run transformTable and ensure packing button visible and ensure toggle =====
+  // ===== main polling =====
   const saved = localStorage.getItem(STORAGE_KEY);
   const initiallyHidden = saved === null ? true : (saved === '1');
   if (initiallyHidden) document.body.classList.add(HIDE_CLASS);
