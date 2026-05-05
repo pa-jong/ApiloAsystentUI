@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         APILO: Asystent UI
 // @namespace    http://tampermonkey.net/
-// @version      1.1
+// @version      1.2
 // @description  Modufikuje widok szczegółów zamówienia usuwa zbędne elemety poprawia widoczność na panelu dotykowym
 // @author       Pa-Jong
 // @match        https://elektrone.apilo.com/order/order/detail/*
+// @require      https://pa-jong.github.io/ApiloAsystentUI/ApiloAsystentUI.user.js
 // @updateURL    https://pa-jong.github.io/ApiloAsystentUI/update.json
 // @downloadURL  https://pa-jong.github.io/ApiloAsystentUI/ApiloAsystentUI.user.js
 // @grant        none
@@ -102,16 +103,7 @@ div[class^="kodabots-widget"] {
     pointer-events: none !important;
 }
 
-/* --- Zapewnij widoczność przycisku Pakuj (override generalny) --- */
-a[data-packing-assistant-button],
-a[href*="packing-assistant"],
-a.btn.btn-info.rajax.btn-primary {
-  display: inline-block !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-  z-index: 110000 !important;
-}
+
 
 /* ====== RIGHT-TOP TOGGLE CONTAINER ====== */
 #apilo-right-toggle {
@@ -152,6 +144,24 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
   visibility: visible !important;
   opacity: 1 !important;
   pointer-events: auto !important;
+}
+
+/* --- Zapewnij widoczność tylko przycisku Pakuj (override generalny) --- */
+a[data-packing-assistant-button],
+a[href*="packing-assistant"]:not([data-picking-assistant-button]) {
+  display: inline-block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: 110000 !important;
+}
+
+/* Zbieraj zawsze ukryty w trybie ukrytego panelu */
+body.apilo-hide-kt-portlet a[data-picking-assistant-button] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 `;
   document.head.appendChild(style);
@@ -358,6 +368,53 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
     } catch(e) { console.warn('apilo: ensurePackingButtonVisibleButDontMove', e); }
   }
 
+function forceHidePickingButton() {
+  try {
+    const buttons = document.querySelectorAll('a[data-picking-assistant-button]');
+    buttons.forEach(btn => {
+      if (document.body.classList.contains(HIDE_CLASS)) {
+        btn.style.display = 'none';
+        btn.style.visibility = 'hidden';
+        btn.style.opacity = '0';
+        btn.style.pointerEvents = 'none';
+      } else {
+        // gdy panel pokazany → wraca normalnie
+        btn.style.display = '';
+        btn.style.visibility = '';
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+      }
+    });
+  } catch(e) {
+    console.warn('apilo: hide picking', e);
+  }
+}
+
+function removePickingButton() {
+  try {
+    if (!document.body.classList.contains(HIDE_CLASS)) return;
+
+    const buttons = document.querySelectorAll('a[data-picking-assistant-button]');
+    buttons.forEach(btn => {
+      btn.remove(); // twarde usunięcie
+    });
+  } catch(e) {
+    console.warn('apilo: remove picking', e);
+  }
+}
+
+function observePickingButton() {
+  const observer = new MutationObserver(() => {
+    removePickingButton();
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+}
+
+
   // ===== main polling =====
   const saved = localStorage.getItem(STORAGE_KEY);
   const initiallyHidden = saved === null ? true : (saved === '1');
@@ -370,6 +427,7 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
     ensureRightToggle();
     try { transformTable(); } catch(e){ console.warn(e); }
     try { ensurePackingButtonVisibleButDontMove(); } catch(e){ console.warn(e); }
+    try { forceHidePickingButton(); } catch(e){}
 
     if (attempts >= MAX_ATTEMPTS) clearInterval(interval);
   }, INTERVAL_MS);
@@ -380,6 +438,8 @@ body.apilo-hide-kt-portlet .kt-portlet__head-toolbar[style*="display:none"] a[da
     ensureRightToggle();
     try { transformTable(); } catch(e){}
     try { ensurePackingButtonVisibleButDontMove(); } catch(e){}
+    observePickingButton();
+    removePickingButton();
   });
 
 })();
